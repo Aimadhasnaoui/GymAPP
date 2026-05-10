@@ -27,3 +27,12 @@ export const getCheckInByMemberId = async (id) => {
         throw error;
     }
 }
+export const Addcheking = async (data) => {
+    try {
+        console.log("Checkin response:", data);
+        const response = await axiosInstance.post("/CheckIn", data);
+        return response.data;
+    } catch (error) {
+        throw error;
+    }
+}

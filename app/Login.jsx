@@ -198,7 +198,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#000",
   },
   overlay: {
-    backgroundColor: "rgba(0, 0, 0, 0.6)",
+    backgroundColor: "rgba(141, 252, 146, 0.1)",
   },
   contentWrapper: {
     flex: 1,
@@ -295,7 +295,7 @@ const styles = StyleSheet.create({
   },
   submitButtonText: {
     textAlign: "center",
-    color: "#000",
+    color: "green",
     fontWeight: "800",
     fontSize: 18,
     textTransform: "uppercase",

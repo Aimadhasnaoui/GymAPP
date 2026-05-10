@@ -1,14 +1,65 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, Pressable, Animated } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Zap, X } from 'lucide-react-native';
-import { router } from 'expo-router';
-
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CameraView, useCameraPermissions } from "expo-camera";
+import Constants from "expo-constants";
+import { router } from "expo-router";
+import { AlertCircle, CheckCircle2, X, Zap } from "lucide-react-native";
+import React, { useEffect, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import { io } from "socket.io-client";
+import { useAuth } from "../../context/AuthContext";
+import { Addcheking, GetMember } from "../../services/Member";
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
   const [torch, setTorch] = useState(false);
+  const [codescaned, setCodescaned] = useState(false);
   const scanAnim = React.useRef(new Animated.Value(0)).current;
+  const [scanError, setScanError] = useState(null);
+  const [isError, setIsError] = useState(false);
+
+  const apiBaseUrl = Constants.expoConfig.extra.apiBaseUrl;
+  const socketRef = React.useRef(null);
+  const { authUser } = useAuth();
+  const memberId = authUser?.data?.memberId;
+  const queryClient = useQueryClient();
+  const [isAddingCheckin, setIsAddingCheckin] = useState(false);
+
+  const { data: member } = useQuery({
+    queryKey: ["member"],
+    queryFn: async () => {
+      if (!memberId) throw new Error("Member ID not found");
+      const response = await GetMember(memberId);
+      return response.data;
+    },
+    enabled: !!memberId,
+  });
+
+
+  useEffect(() => {
+    socketRef.current = io(apiBaseUrl);
+
+    socketRef.current.on("connect", () => {
+      console.log("Connected to WebSocket server");
+      socketRef.current.emit("requestQR");
+    });
+
+    socketRef.current.on("disconnect", () => {
+      console.log("Disconnected from WebSocket server");
+    });
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!permission) {
@@ -29,7 +80,7 @@ export default function ScanScreen() {
           duration: 2000,
           useNativeDriver: true,
         }),
-      ])
+      ]),
     ).start();
   }, [scanAnim]);
 
@@ -40,7 +91,9 @@ export default function ScanScreen() {
   if (!permission.granted) {
     return (
       <View style={styles.container}>
-        <Text style={styles.message}>Accès à la caméra requis pour scanner les codes QR</Text>
+        <Text style={styles.message}>
+          Accès à la caméra requis pour scanner les codes QR
+        </Text>
         <Pressable onPress={requestPermission} style={styles.button}>
           <Text style={styles.buttonText}>Autoriser la caméra</Text>
         </Pressable>
@@ -49,15 +102,55 @@ export default function ScanScreen() {
   }
 
   const handleBarcodeScanned = ({ data }) => {
-    setScanned(true);
-    // Logic for handling the scanned QR code
-    console.log('Scanned Data:', data);
-    
-    // Example: redirect to a specific member or confirm check-in
-    alert(`Scanned: ${data}`);
-    
-    // Reset after delay
-    setTimeout(() => setScanned(false), 2000);
+    setIsAddingCheckin(true);
+    const CheckIn_data = {
+      MemberId: memberId,
+      CheckIn: new Date().toISOString(),
+    };
+    Addcheking(CheckIn_data)
+      .then((res) => {
+        // Invalidate check-in history so the home page updates
+        queryClient.invalidateQueries(["checkins"]);
+
+        socketRef.current.emit("validate_checkin", {
+          name: member?.FullName || authUser?.data?.fullName,
+          time: new Date().toLocaleString(),
+          type:"success"
+        });
+        setCodescaned(true);
+        setScanned(true);
+        // Wait 5 seconds so the user sees the "Bienvenue" message, then go home
+        setTimeout(() => {
+          setCodescaned(false);
+          setScanned(false);
+          router.replace("/(tabs)");
+        }, 5000);
+      })
+      .catch((error) => {
+        console.error("Checkin error:", error);
+        const errorMsg =
+        error.response?.data?.message ||
+        "Erreur lors de la validation. Veuillez réessayer.";
+        if(error.response?.data?.message ===  "Erreur lors de la validation. Veuillez réessayer."){
+          socketRef.current.emit("validate_checkin", {
+            name: member?.FullName || authUser?.data?.fullName,
+            time: new Date().toLocaleString(),
+            type: "error",
+            message: errorMsg
+          });
+        }
+        setScanError(errorMsg);
+        setIsError(true);
+        setScanned(true);
+
+      })
+      .finally(() => {
+        // Disconnect socket to trigger new QR generation on server
+        if (socketRef.current) {
+          socketRef.current.disconnect();
+        }
+        setIsAddingCheckin(false);
+      });
   };
 
   return (
@@ -68,7 +161,7 @@ export default function ScanScreen() {
         enableTorch={torch}
         onBarcodeScanned={scanned ? undefined : handleBarcodeScanned}
         barcodeScannerSettings={{
-          barcodeTypes: ['qr'],
+          barcodeTypes: ["qr"],
         }}
       >
         <View style={styles.overlay}>
@@ -81,23 +174,25 @@ export default function ScanScreen() {
               <View style={[styles.corner, styles.topRight]} />
               <View style={[styles.corner, styles.bottomLeft]} />
               <View style={[styles.corner, styles.bottomRight]} />
-              <Animated.View 
+              <Animated.View
                 style={[
-                  styles.scanLine, 
-                  { transform: [{ translateY: scanAnim }] }
-                ]} 
+                  styles.scanLine,
+                  { transform: [{ translateY: scanAnim }] },
+                ]}
               />
             </View>
             <View style={styles.maskSide} />
           </View>
           <View style={styles.maskBottom}>
             <View style={styles.instructionContainer}>
-              <Text style={styles.instructionText}>ALIGN QR CODE WITHIN FRAME</Text>
+              <Text style={styles.instructionText}>
+                ALIGN QR CODE WITHIN FRAME
+              </Text>
             </View>
 
             <View style={styles.footer}>
               <View style={styles.controlItem}>
-                <Pressable 
+                <Pressable
                   style={[styles.btnAction, torch && styles.btnActionActive]}
                   onPress={() => setTorch(!torch)}
                 >
@@ -107,7 +202,7 @@ export default function ScanScreen() {
               </View>
 
               <View style={styles.controlItem}>
-                <Pressable 
+                <Pressable
                   style={styles.btnActionCancel}
                   onPress={() => router.back()}
                 >
@@ -119,6 +214,53 @@ export default function ScanScreen() {
           </View>
         </View>
       </CameraView>
+
+      {codescaned && (
+        <View style={styles.successOverlay}>
+          <Animated.View style={styles.successCard}>
+            <CheckCircle2 color="#2f9f3d" size={80} strokeWidth={2.5} />
+            <Text style={styles.successTitle}>Bienvenue !</Text>
+            <Text style={styles.successMessage}>
+              Passez une excellente séance d'entraînement.
+            </Text>
+            <Pressable
+              style={styles.successButton}
+              onPress={() => {
+                setCodescaned(false);
+                setScanned(false);
+              }}
+            >
+              <Text style={styles.successButtonText}>D'accord</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
+
+      {isAddingCheckin && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#2f9f3d" />
+          <Text style={styles.loadingText}>Validation en cours...</Text>
+        </View>
+      )}
+
+      {isError && (
+        <View style={styles.errorOverlay}>
+          <Animated.View style={styles.errorCard}>
+            <AlertCircle color="#ff4444" size={80} strokeWidth={2.5} />
+            <Text style={styles.errorTitle}>Attention</Text>
+            <Text style={styles.errorMessageText}>{scanError}</Text>
+            <Pressable
+              style={styles.errorButton}
+              onPress={() => {
+                setIsError(false);
+                setScanned(false);
+              }}
+            >
+              <Text style={styles.errorButtonText}>Réessayer</Text>
+            </Pressable>
+          </Animated.View>
+        </View>
+      )}
     </View>
   );
 }
@@ -126,25 +268,25 @@ export default function ScanScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#000',
+    backgroundColor: "#000",
   },
   message: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 16,
-    textAlign: 'center',
+    textAlign: "center",
     marginBottom: 20,
     paddingHorizontal: 40,
   },
   button: {
-    backgroundColor: '#2f9f3d',
+    backgroundColor: "#2f9f3d",
     paddingHorizontal: 24,
     paddingVertical: 14,
     borderRadius: 12,
-    alignSelf: 'center',
+    alignSelf: "center",
   },
   buttonText: {
-    color: '#fff',
-    fontWeight: 'bold',
+    color: "#fff",
+    fontWeight: "bold",
     fontSize: 16,
   },
   overlay: {
@@ -152,33 +294,33 @@ const styles = StyleSheet.create({
   },
   maskTop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: "rgba(0,0,0,0.7)",
   },
   maskMiddle: {
     height: 260,
-    flexDirection: 'row',
+    flexDirection: "row",
   },
   maskSide: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: "rgba(0,0,0,0.7)",
   },
   viewfinder: {
     width: 260,
     height: 260,
-    backgroundColor: 'transparent',
-    position: 'relative',
+    backgroundColor: "transparent",
+    position: "relative",
   },
   maskBottom: {
     flex: 1.5,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    alignItems: 'center',
+    backgroundColor: "rgba(0,0,0,0.7)",
+    alignItems: "center",
     paddingTop: 50,
   },
   corner: {
-    position: 'absolute',
+    position: "absolute",
     width: 32,
     height: 32,
-    borderColor: '#2f9f3d',
+    borderColor: "#2f9f3d",
   },
   topLeft: {
     top: -2,
@@ -209,64 +351,173 @@ const styles = StyleSheet.create({
     borderBottomRightRadius: 12,
   },
   scanLine: {
-    position: 'absolute',
+    position: "absolute",
     left: 15,
     right: 15,
     height: 4,
-    backgroundColor: '#2f9f3d',
+    backgroundColor: "#2f9f3d",
     borderRadius: 2,
     opacity: 0.8,
-    shadowColor: '#2f9f3d',
+    shadowColor: "#2f9f3d",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
     shadowRadius: 15,
     elevation: 10,
   },
   instructionContainer: {
-    backgroundColor: 'rgba(255,255,255,0.08)',
+    backgroundColor: "rgba(255,255,255,0.08)",
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: "rgba(255,255,255,0.15)",
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 30,
     marginBottom: 60,
   },
   instructionText: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: "900",
     letterSpacing: 1.2,
   },
   footer: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 60,
   },
   controlItem: {
-    alignItems: 'center',
+    alignItems: "center",
     gap: 12,
   },
   btnAction: {
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(255,255,255,0.12)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   btnActionActive: {
-    backgroundColor: '#2f9f3d',
+    backgroundColor: "#2f9f3d",
   },
   btnActionCancel: {
     width: 68,
     height: 68,
     borderRadius: 34,
-    backgroundColor: 'rgba(255,255,255,0.12)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    backgroundColor: "rgba(255,255,255,0.12)",
+    justifyContent: "center",
+    alignItems: "center",
   },
   btnLabel: {
-    color: '#fff',
+    color: "#fff",
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: "700",
+  },
+  successOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.85)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 100,
+  },
+  successCard: {
+    backgroundColor: "#1a1a1a",
+    width: "85%",
+    padding: 30,
+    borderRadius: 24,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(47, 159, 61, 0.3)",
+    shadowColor: "#2f9f3d",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  successTitle: {
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: "bold",
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  successMessage: {
+    color: "#aaa",
+    fontSize: 16,
+    textAlign: "center",
+    lineHeight: 24,
+    marginBottom: 30,
+  },
+  successButton: {
+    backgroundColor: "#2f9f3d",
+    paddingHorizontal: 40,
+    paddingVertical: 15,
+    borderRadius: 15,
+    width: "100%",
+    alignItems: "center",
+  },
+  successButtonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 200,
+  },
+  loadingText: {
+    color: "#fff",
+    marginTop: 15,
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  errorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.85)",
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 150,
+  },
+  errorCard: {
+    backgroundColor: "#1a1a1a",
+    width: "85%",
+    padding: 30,
+    borderRadius: 24,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255, 68, 68, 0.3)",
+    shadowColor: "#ff4444",
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  errorTitle: {
+    color: "#fff",
+    fontSize: 28,
+    fontWeight: "bold",
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  errorMessageText: {
+    color: "#aaa",
+    fontSize: 16,
+    textAlign: "center",
+    lineHeight: 24,
+    marginBottom: 30,
+  },
+  errorButton: {
+    backgroundColor: "#ff4444",
+    paddingHorizontal: 40,
+    paddingVertical: 15,
+    borderRadius: 15,
+    width: "100%",
+    alignItems: "center",
+  },
+  errorButtonText: {
+    color: "#fff",
+    fontSize: 18,
+    fontWeight: "bold",
   },
 });
