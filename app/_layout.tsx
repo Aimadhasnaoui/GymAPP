@@ -4,9 +4,9 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ActivityIndicator, View } from 'react-native';
 
 const queryClient = new QueryClient();
@@ -21,7 +21,7 @@ function AppNavigator() {
 
   useEffect(() => {
     if (isLoading) return; // Wait until storage has been read
-    console.log(authUser);
+    console.log("authUser", authUser);
     if (authUser) {
       router.replace('/(tabs)');
     } else {

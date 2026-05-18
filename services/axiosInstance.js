@@ -8,7 +8,7 @@ const apiBaseUrl = Constants.expoConfig.extra.apiBaseUrl;
 const axiosInstance = axios.create({
   baseURL: apiBaseUrl,
 });
-
+console.log("apiBaseUrl", apiBaseUrl)
 // ── Request Interceptor: Attach Token ─────────────────────────────────────────
 axiosInstance.interceptors.request.use(
   async (config) => {

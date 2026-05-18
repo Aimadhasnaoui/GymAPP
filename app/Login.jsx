@@ -13,8 +13,8 @@ import {
   TouchableWithoutFeedback,
   View,
 } from "react-native";
-import { loginMember } from "../services/Member";
 import { useAuth } from "../context/AuthContext";
+import { loginMember } from "../services/Member";
 
 export default function Login() {
   const { login } = useAuth();
@@ -63,7 +63,7 @@ export default function Login() {
           setisloading(false);
           // Save session — AuthContext handles storage + routing
           await login(res);
-          console.log(res);
+          console.log("Login res", res);
         })
         .catch((err) => {
           let message = "Une erreur est survenue. Veuillez réessayer.";
