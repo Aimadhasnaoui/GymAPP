@@ -15,6 +15,7 @@ import {
 import { io } from "socket.io-client";
 import { useAuth } from "../../context/AuthContext";
 import { Addcheking, GetMember } from "../../services/Member";
+import { getToken } from "../../services/secureStorage";
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
@@ -43,18 +44,26 @@ export default function ScanScreen() {
 
 
   useEffect(() => {
-    socketRef.current = io(apiBaseUrl);
+    let cancelled = false;
+    (async () => {
+      // Authenticate the socket handshake with the stored JWT.
+      const token = await getToken();
+      if (cancelled) return;
+      const socket = io(apiBaseUrl, { auth: { token } });
+      socketRef.current = socket;
 
-    socketRef.current.on("connect", () => {
-      console.log("Connected to WebSocket server");
-      socketRef.current.emit("requestQR");
-    });
+      socket.on("connect", () => {
+        console.log("Connected to WebSocket server");
+        // The display mints and rotates its own QR now — nothing to request.
+      });
 
-    socketRef.current.on("disconnect", () => {
-      console.log("Disconnected from WebSocket server");
-    });
+      socket.on("disconnect", () => {
+        console.log("Disconnected from WebSocket server");
+      });
+    })();
 
     return () => {
+      cancelled = true;
       if (socketRef.current) {
         socketRef.current.disconnect();
       }
@@ -103,6 +112,11 @@ export default function ScanScreen() {
 
   const handleBarcodeScanned = ({ data }) => {
     setIsAddingCheckin(true);
+    // The QR encodes "checkin:<nonce>" — extract the nonce to prove the scan.
+    const nonceId =
+      typeof data === "string" && data.startsWith("checkin:")
+        ? data.slice("checkin:".length)
+        : null;
     const CheckIn_data = {
       MemberId: memberId,
       CheckIn: new Date().toISOString(),
@@ -113,6 +127,7 @@ export default function ScanScreen() {
         queryClient.invalidateQueries(["checkins"]);
 
         socketRef.current.emit("validate_checkin", {
+          id: nonceId,
           name: member?.FullName || authUser?.data?.fullName,
           time: new Date().toLocaleString(),
           type:"success"
@@ -133,6 +148,7 @@ export default function ScanScreen() {
         "Erreur lors de la validation. Veuillez réessayer.";
         if(error.response?.data?.message ===  "Erreur lors de la validation. Veuillez réessayer."){
           socketRef.current.emit("validate_checkin", {
+            id: nonceId,
             name: member?.FullName || authUser?.data?.fullName,
             time: new Date().toLocaleString(),
             type: "error",
@@ -145,10 +161,6 @@ export default function ScanScreen() {
 
       })
       .finally(() => {
-        // Disconnect socket to trigger new QR generation on server
-        if (socketRef.current) {
-          socketRef.current.disconnect();
-        }
         setIsAddingCheckin(false);
       });
   };

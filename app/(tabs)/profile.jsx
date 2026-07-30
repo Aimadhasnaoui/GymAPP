@@ -2,7 +2,6 @@ import React from 'react';
 import { View, Text, StyleSheet, ScrollView, SafeAreaView, Pressable, ActivityIndicator } from 'react-native';
 import { User, Mail, Phone, MapPin, Calendar, Award, LogOut } from 'lucide-react-native';
 import { useQuery } from '@tanstack/react-query';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { GetMember } from '../../services/Member';
 import { useAuth } from '../../context/AuthContext';
 
